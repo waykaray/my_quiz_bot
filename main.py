@@ -7,45 +7,51 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from google import genai
 
+# Логирование для Render
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация нового клиента Google AI
+# Клиенты (Ключи берем из Environment Variables)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 dp = Dispatcher()
 
+# Мощный промпт 2026 года
 PROMPT = (
-    "Ты ведущий квиза. Придумай 1 вопрос на тему {topic}. "
+    "Ты — ироничный ведущий квиза. Тема: {topic}. "
+    "Если тема 'Кино', опиши известный фильм или сериал как абсурдное ТЗ от заказчика или странную жалобу. "
+    "Если тема 'Юмор', придумай смешную логическую задачку-парадокс с подвохом. "
     "Ответ дай СТРОГО в формате JSON: "
-    '{{"question": "текст", "options": ["вар1", "вар2", "вар3", "вар4"], "correct_id": 0, "expl": "факт"}}'
+    '{{"question": "текст", "options": ["1", "2", "3", "4"], "correct_id": 0, "expl": "пояснение"}}'
 )
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     builder = InlineKeyboardBuilder()
-    builder.button(text="Stranger Things 🧇", callback_data="t_Stranger Things")
-    builder.button(text="Кино 🍿", callback_data="t_Movies")
-    builder.button(text="Бизнес 🕯", callback_data="t_Business")
-    builder.button(text="Случайный факт 🎲", callback_data="t_General")
-    builder.adjust(2)
-    await message.answer("Выбери тему квиза:", reply_markup=builder.as_markup())
+    builder.button(text="🎬 Угадай фильм (Кино-ТЗ)", callback_data="t_Кино")
+    builder.button(text="🤡 Юморные задачки", callback_data="t_Юмор")
+    builder.adjust(1)
+    
+    await message.answer(
+        "Добро пожаловать в ИИ-Квиз 2026! 🚀\nВыбери режим игры:", 
+        reply_markup=builder.as_markup()
+    )
 
 @dp.callback_query(F.data.startswith("t_"))
 async def handle_quiz(callback: types.CallbackQuery):
     topic = callback.data.split("_")[1]
-    await callback.message.answer(f"⏳ Генерирую вопрос: {topic}...")
+    # Редактируем старое сообщение, чтобы не плодить текст
+    await callback.message.edit_text(f"📡 Опрашиваю нейросеть по теме: {topic}...")
+    
     try:
-        # Новый способ вызова Gemini
+        # Используем Gemini 2.0 Flash с принудительным JSON-форматом
         response = client.models.generate_content(
-            model="gemini-2.5-flash", 
-            contents=PROMPT.format(topic=topic)
+            model="gemini-2.0-flash",
+            contents=PROMPT.format(topic=topic),
+            config={'response_mime_type': 'application/json'}
         )
         
-        # Умная очистка JSON
-        raw_text = response.text
-        start = raw_text.find('{')
-        end = raw_text.rfind('}') + 1
-        data = json.loads(raw_text[start:end])
+        # В 2026-м Gemini в JSON-режиме возвращает чистый объект
+        data = json.loads(response.text)
         
         await bot.send_poll(
             chat_id=callback.message.chat.id,
@@ -53,12 +59,17 @@ async def handle_quiz(callback: types.CallbackQuery):
             options=[str(opt)[:100] for opt in data["options"][:10]],
             type='quiz',
             correct_option_id=int(data["correct_id"]),
-            explanation=data.get("expl", "Интересно!")[:200],
+            explanation=data.get("expl", "Вот так вот!")[:200],
             is_anonymous=False
         )
+        
+        # Возвращаем меню выбора после паузы
+        await asyncio.sleep(1)
+        await callback.message.answer("Играем дальше?", reply_markup=callback.message.reply_markup)
+        
     except Exception as e:
-        logging.error(f"AI Error: {e}")
-        await callback.message.answer("Связь с Демогоргоном прервана... Попробуй еще раз!")
+        logging.error(f"Error: {e}")
+        await callback.message.answer("⚠️ Ошибка матрицы. Попробуй еще раз через 5 секунд.")
 
 async def main():
     await dp.start_polling(bot)
