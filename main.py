@@ -5,43 +5,47 @@ import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import google.generativeai as genai
+from google import genai
 
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
-
-bot = Bot(token=TOKEN)
+# Инициализация нового клиента Google AI
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 dp = Dispatcher()
 
-QUIZ_PROMPT = (
-    "Ты остроумный ведущий. Придумай 1 вопрос на тему {topic}. "
-    "Ответ дай СТРОГО в JSON: "
-    '{{"question": "текст(до 250 симв)", "options": ["1","2","3","4"], "correct_id": 0, "expl": "факт"}}'
+PROMPT = (
+    "Ты ведущий квиза. Придумай 1 вопрос на тему {topic}. "
+    "Ответ дай СТРОГО в формате JSON: "
+    '{{"question": "текст", "options": ["вар1", "вар2", "вар3", "вар4"], "correct_id": 0, "expl": "факт"}}'
 )
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     builder = InlineKeyboardBuilder()
-    builder.button(text="Stranger Things  waffle", callback_data="t_Stranger Things")
+    builder.button(text="Stranger Things 🧇", callback_data="t_Stranger Things")
     builder.button(text="Кино 🍿", callback_data="t_Movies")
-    builder.button(text="Свечи и бизнес 🕯", callback_data="t_Candles")
+    builder.button(text="Бизнес 🕯", callback_data="t_Business")
     builder.button(text="Случайный факт 🎲", callback_data="t_General")
     builder.adjust(2)
     await message.answer("Выбери тему квиза:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("t_"))
-async def ask_quiz(callback: types.CallbackQuery):
+async def handle_quiz(callback: types.CallbackQuery):
     topic = callback.data.split("_")[1]
     await callback.message.answer(f"⏳ Генерирую вопрос: {topic}...")
     try:
-        response = model.generate_content(QUIZ_PROMPT.format(topic=topic))
-        # Очистка JSON от возможных артефактов
-        txt = response.text.strip().replace("```json", "").replace("```", "")
-        data = json.loads(txt)
+        # Новый способ вызова Gemini
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", 
+            contents=PROMPT.format(topic=topic)
+        )
+        
+        # Умная очистка JSON
+        raw_text = response.text
+        start = raw_text.find('{')
+        end = raw_text.rfind('}') + 1
+        data = json.loads(raw_text[start:end])
         
         await bot.send_poll(
             chat_id=callback.message.chat.id,
@@ -53,13 +57,8 @@ async def ask_quiz(callback: types.CallbackQuery):
             is_anonymous=False
         )
     except Exception as e:
-        logging.error(e)
-        await callback.message.answer("Ошибка связи с ИИ. Попробуй еще раз!")
-
-@dp.message(Command("meme"))
-async def send_meme(message: types.Message):
-    res = model.generate_content("Придумай смешную текстовую подпись для мема. Тема: жизнь в Днепре или фанаты сериалов.")
-    await message.answer(f"😂 Мем:\n\n{res.text}")
+        logging.error(f"AI Error: {e}")
+        await callback.message.answer("Связь с Демогоргоном прервана... Попробуй еще раз!")
 
 async def main():
     await dp.start_polling(bot)
